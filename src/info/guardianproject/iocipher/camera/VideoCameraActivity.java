@@ -1,6 +1,20 @@
+/**
+ * 
+ * This file contains code from the IOCipher Camera Library "CipherCam".
+ *
+ * For more information about IOCipher, see https://guardianproject.info/code/iocipher
+ * and this sample library: https://github.com/n8fr8/IOCipherCameraExample
+ *
+ * IOCipher Camera Sample is distributed under this license (aka the 3-clause BSD license)
+ *
+ * @author n8fr8
+ * 
+ */
+
 package info.guardianproject.iocipher.camera;
 
 import info.guardianproject.iocipher.File;
+import info.guardianproject.iocipher.FileInputStream;
 import info.guardianproject.iocipher.FileOutputStream;
 import info.guardianproject.iocipher.camera.encoders.AACHelper;
 import info.guardianproject.iocipher.camera.encoders.ImageToMJPEGMOVMuxer;
@@ -8,16 +22,18 @@ import info.guardianproject.iocipher.camera.io.IOCipherFileChannelWrapper;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 
 import org.jcodec.common.SeekableByteChannel;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
 import android.hardware.Camera;
@@ -29,7 +45,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.provider.MediaStore;
+import android.support.v4.content.LocalBroadcastManager;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Toast;
 
@@ -40,7 +58,7 @@ public class VideoCameraActivity extends CameraBaseActivity {
 	private String mFileBasePath = null;
 	private boolean mIsRecording = false;
 	
-	private ArrayDeque<byte[]> mFrameQ = null;
+	private ArrayDeque<VideoFrame> mFrameQ = null;
 	
 	private int mLastWidth = -1;
 	private int mLastHeight = -1;
@@ -53,35 +71,130 @@ public class VideoCameraActivity extends CameraBaseActivity {
 	private byte[] audioData;
 	private AudioRecord audioRecord;
 	
-	private int mFramesTotal = 0;
-	private int mFPS = 0;
-	
 	private boolean mPreCompressFrames = true;
 	private OutputStream outputStreamAudio;
 	private info.guardianproject.iocipher.File fileAudio;
 
-	private int frameCounter = 0;
+	private int mFpsCounter = 0;
 	private long start = 0;
-
+	private long lastTime = 0;
+	private int mFramesTotal = 0;
+	private int mFPS = 15; //default is 15fps
+	
 	private boolean isRequest = false;
+	private ArrayList<String> mResultList = null;
 
+	private boolean mInTopHalf = false;
+
+	private info.guardianproject.iocipher.File fileOut;
 	
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
+		
+		getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+		mIsVideo = true;
+		
 		super.onCreate(savedInstanceState);
+
 		mFileBasePath = getIntent().getStringExtra("basepath");
 		
-		button.setVisibility(View.VISIBLE);
-		
 		isRequest = getIntent().getAction() != null && getIntent().getAction().equals(MediaStore.ACTION_VIDEO_CAPTURE);
-
+		mResultList = new ArrayList<String>();
 	}
 
 	@Override
 	protected int getLayout()
 	{
-		return R.layout.camera;
+		return R.layout.base_camera;
 	}
+
+	@Override
+	protected void onDestroy() {
+		super.onDestroy();
+		
+		getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+
+	}
+
+	private float mDownX = -1,mLastX = -1;
+	private float mDownY = -1,mLastY=-1;
+	private boolean mIsOnClick = false;
+	private final float SCROLL_THRESHOLD = 10;
+
+	@Override
+	public boolean onTouch(View v, MotionEvent ev) {
+		
+		//if short tap then take a picture
+		
+		//if long and hold then start video, then end on release
+		
+		//if location is on top half then front camera, on bottom have then back camera
+		
+		switch (ev.getAction() & MotionEvent.ACTION_MASK) {
+        case MotionEvent.ACTION_DOWN:
+            mDownX = ev.getX();
+            mDownY = ev.getY();
+            mIsOnClick = true;
+            handler.postDelayed(mLongPressed, 1000);
+            
+            mInTopHalf = mDownY < (mLastHeight/2);
+
+            
+            break;
+        case MotionEvent.ACTION_CANCEL:
+        case MotionEvent.ACTION_UP:
+            if (!mIsRecording) {
+               
+            	//take a picture
+        		mPreviewing = false;
+        		try
+        		{
+        			camera.takePicture(null, null, this);
+        		}
+        		catch (RuntimeException re)
+        		{
+        			//don't crash if the picture didn't work
+        		}
+                handler.removeCallbacks(mLongPressed);
+            	
+            }
+            else
+            {
+            	stopRecording();
+            }
+            
+            break;
+        case MotionEvent.ACTION_MOVE:
+        	
+        	mLastX = ev.getX();
+        	mLastY = ev.getY();
+            
+            mInTopHalf = mLastY < (mDownY-100);
+
+            toggleCamera(mInTopHalf);
+            
+            if (mIsOnClick && (Math.abs(mDownX - ev.getX()) > SCROLL_THRESHOLD || Math.abs(mDownY - ev.getY()) > SCROLL_THRESHOLD)) {
+                mIsOnClick = false;
+                
+            }
+            
+            break;
+        default:
+            break;
+	    }
+	    return true;
+		
+	}
+	
+	final Handler handler = new Handler(); 
+	Runnable mLongPressed = new Runnable() { 
+	    public void run() { 
+	        Log.i("", "Long press!");
+	        
+	        startRecording();
+	        
+	    }   
+	};
 
 	
 	@Override
@@ -92,55 +205,80 @@ public class VideoCameraActivity extends CameraBaseActivity {
 			if (!mIsRecording)
 			{
 				
-				
-				mFrameQ = new ArrayDeque<byte[]>();
-				
-				mFramesTotal = 0;
-	
-				String fileName = "video" + new java.util.Date().getTime() + ".mov";
-				info.guardianproject.iocipher.File fileOut = new info.guardianproject.iocipher.File(mFileBasePath,fileName);
-				
-				try {
-					mIsRecording = true;
-					
-					if (useAAC)
-						initAudio(fileOut.getAbsolutePath()+".aac");
-					else
-						initAudio(fileOut.getAbsolutePath()+".pcm");
-					
-					new Encoder(fileOut).start();
-					//start capture
-					startAudioRecording();
-					
-					progress.setText("[REC]");
-
-				} catch (Exception e) {
-					Log.d("Video","error starting video",e);
-					Toast.makeText(this, "Error init'ing video: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
-					finish();
-				}
+				startRecording();
 				
 				
 			}
 			else
 			{
-				progress.setText("[SAVING]");
-				h.sendEmptyMessageDelayed(1, 2000);
-				progress.setText("");
+				stopRecording ();
 			}
 		}
-		else
-		{
-			mPreviewing = false;
-			camera.takePicture(null, null, this);
+		
+	}
+	
+	
+	private void startRecording ()
+	{
+		mFrameQ = new ArrayDeque<VideoFrame>();
+		
+		mFramesTotal = 0;
+		mFpsCounter = 0;
+		
+		lastTime = System.currentTimeMillis();
+		
+		String fileName = "secure_video_" + new java.util.Date().getTime() + ".mp4";
+		fileOut = new info.guardianproject.iocipher.File(mFileBasePath,fileName);
+		
+		mResultList.add(fileOut.getAbsolutePath());
+		Intent intentResult = new Intent().putExtra(MediaStore.EXTRA_OUTPUT, mResultList.toArray(new String[mResultList.size()]));			
+		setResult(Activity.RESULT_OK, intentResult);
+
+		try {
+			mIsRecording = true;
+			
+			if (useAAC)
+				initAudio(fileOut.getAbsolutePath()+".aac");
+			else
+				initAudio(fileOut.getAbsolutePath()+".pcm");
+			
+			boolean withEmbeddedAudio = true;
+			
+			Encoder encoder = new Encoder(fileOut,mFPS,withEmbeddedAudio);
+			encoder.start();
+			//start capture
+			startAudioRecording();
+			
+			progress.setText(R.string._rec_);
+
+		} catch (Exception e) {
+			Log.d("Video","error starting video",e);
+			Toast.makeText(this, "Error init'ing video: " + e.getLocalizedMessage(), Toast.LENGTH_LONG).show();
+			finish();
 		}
 	}
 	
-	private void toggleCamera ()
+	private void stopRecording ()
 	{
-		mIsSelfie = !mIsSelfie;
-		releaseCamera();
-		initCamera();
+		Intent intent = new Intent("new-media");
+		  // You can also include some extra data.
+		  intent.putExtra("media", fileOut.getAbsolutePath());
+		  LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+		  
+		progress.setText(R.string._saving_);
+		h.sendEmptyMessageDelayed(1, 2000);
+		progress.setText("");
+		
+	}
+	
+	private void toggleCamera (boolean isSelfie)
+	{
+		if (isSelfie != mIsSelfie)
+		{
+			mIsSelfie = isSelfie;
+			releaseCamera();
+			initCamera();
+		}
 	}
 
 	//support still pictures if you tap on the screen
@@ -148,23 +286,36 @@ public class VideoCameraActivity extends CameraBaseActivity {
 	public void onPictureTaken(final byte[] data, Camera camera) {		
 		File fileSecurePicture;
 		try {
+
+			overlayView.setBackgroundResource(R.color.flash);
+			
 			long mTime = System.currentTimeMillis();
-			fileSecurePicture = new File(mFileBasePath,"secureselfie_" + mTime + ".jpg");
+			fileSecurePicture = new File(mFileBasePath,"secure_image_" + mTime + ".jpg");
 
 			BufferedOutputStream out = new BufferedOutputStream(new FileOutputStream(fileSecurePicture));
 			out.write(data);
 			out.flush();
 			out.close();
 
-			setResult(Activity.RESULT_OK, new Intent().putExtra(MediaStore.EXTRA_OUTPUT, fileSecurePicture.getAbsolutePath()));
+			mResultList.add(fileSecurePicture.getAbsolutePath());
+			
+			Intent intent = new Intent("new-media");
+			  // You can also include some extra data.
+			  intent.putExtra("media", fileSecurePicture.getAbsolutePath());
+			  LocalBroadcastManager.getInstance(this).sendBroadcast(intent);
+			  
+
+			Intent intentResult = new Intent().putExtra(MediaStore.EXTRA_OUTPUT, mResultList.toArray(new String[mResultList.size()]));			
+			setResult(Activity.RESULT_OK, intentResult);
 			
 			view.postDelayed(new Runnable()
 			{
 				@Override
 				public void run() {
+					overlayView.setBackgroundColor(Color.TRANSPARENT);
 					resumePreview();
 				}
-			},200);
+			},100);
 
 		} catch (Exception e) {
 			e.printStackTrace();
@@ -177,61 +328,80 @@ public class VideoCameraActivity extends CameraBaseActivity {
 	@Override
 	public void onPreviewFrame(byte[] data, Camera camera) {
 		
-		if (mIsRecording && mFrameQ != null)
+		//even when not recording, we'll compress frames in order to estimate our FPS
+		
+	    Camera.Parameters parameters = camera.getParameters();
+	    mLastWidth = parameters.getPreviewSize().width;
+	    mLastHeight = parameters.getPreviewSize().height;
+	    
+		if (mRotation > 0) //flip height and width
 		{
-			
-		    Camera.Parameters parameters = camera.getParameters();
-		    mLastWidth = parameters.getPreviewSize().width;
-		    mLastHeight = parameters.getPreviewSize().height;
-		    
-			if (mRotation > 0) //flip height and width
+			mLastWidth =parameters.getPreviewSize().height;
+			mLastHeight =parameters.getPreviewSize().width;
+		}
+	    
+	    mPreviewFormat = parameters.getPreviewFormat();
+	    
+	    byte[] dataResult = data;
+		
+		if (mPreCompressFrames)
+		{
+			if (mRotation > 0)
 			{
-				mLastWidth =parameters.getPreviewSize().height;
-				mLastHeight =parameters.getPreviewSize().width;
-			}
-		    
-		    mPreviewFormat = parameters.getPreviewFormat();
-		    
-		    byte[] dataResult = data;
-			
-			if (mPreCompressFrames)
-			{
-				if (mRotation > 0)
-				{
-					dataResult = rotateYUV420Degree90(data,mLastHeight,mLastWidth);
-					
-					 if (getCameraDirection() == CameraInfo.CAMERA_FACING_FRONT)
-					 {						 
-						 dataResult = rotateYUV420Degree90(dataResult,mLastWidth,mLastHeight);
-						 dataResult = rotateYUV420Degree90(dataResult,mLastHeight,mLastWidth);						 
-					 }
-					
-				}
+				dataResult = rotateYUV420Degree90(data,mLastHeight,mLastWidth);
 				
-				YuvImage yuv = new YuvImage(dataResult, mPreviewFormat, mLastWidth, mLastHeight, null);
-			    ByteArrayOutputStream out = new ByteArrayOutputStream();
-			    yuv.compressToJpeg(new Rect(0, 0, mLastWidth, mLastHeight), MediaConstants.sJpegQuality, out);				    
-			    dataResult = out.toByteArray();
-			}   
+				 if (getCameraDirection() == CameraInfo.CAMERA_FACING_FRONT)
+				 {						 
+					 dataResult = rotateYUV420Degree90(dataResult,mLastWidth,mLastHeight);
+					 dataResult = rotateYUV420Degree90(dataResult,mLastHeight,mLastWidth);						 
+				 }
+				
+			}
 			
+			YuvImage yuv = new YuvImage(dataResult, mPreviewFormat, mLastWidth, mLastHeight, null);
+		    ByteArrayOutputStream out = new ByteArrayOutputStream();
+		    yuv.compressToJpeg(new Rect(0, 0, mLastWidth, mLastHeight), MediaConstants.sJpegQuality, out);				    
+		    dataResult = out.toByteArray();
+		}   
+		
+		if (mFramesTotal == 0 && fileOut != null)
+		{
+			try {
+				info.guardianproject.iocipher.FileOutputStream fosThumb = new info.guardianproject.iocipher.FileOutputStream(new info.guardianproject.iocipher.File(fileOut.getAbsolutePath() + ".thumb.jpg"));
+				fosThumb.write(dataResult);
+				fosThumb.flush();
+				fosThumb.close();
 			
-			synchronized (mFrameQ)
+			} catch (Exception e) {
+
+				Log.e("VideoCam","can't save thumb",e);
+			}
+		}
+		
+		if (mIsRecording && mFrameQ != null)
+			if (data != null)
 			{
-				if (data != null)
-				{
-					mFrameQ.add(dataResult);
-					mFramesTotal++;
-					
-					frameCounter++;
-                    if((System.currentTimeMillis() - start) >= 1000) {
-                    	mFPS = frameCounter;
-                        frameCounter = 0; 
-                        start = System.currentTimeMillis();
-                    }
-				}
+				
+				VideoFrame vf = new VideoFrame();
+				vf.image = dataResult;
+				vf.duration = 1;//this is frame duration, not time //System.currentTimeMillis() - lastTime;
+				vf.fps = mFPS;
+				
+				mFrameQ.add(vf);
+				
+				mFramesTotal++;					
+				
 			}
 			
 			
+		if (!mIsRecording) //calculate frame-rate while not recording
+		{
+			mFpsCounter++;
+	        if((System.currentTimeMillis() - start) >= 1000) {
+	        	mFPS = mFpsCounter;
+	        	mFpsCounter = 0; 
+	            start = System.currentTimeMillis();
+	        }
 		}
 		
 	}
@@ -264,23 +434,29 @@ public class VideoCameraActivity extends CameraBaseActivity {
 	    return yuv;
 	}
 
+	private class VideoFrame 
+	{
+		byte[] image;
+		long fps;
+		long duration;
+	}
+	
 	private class Encoder extends Thread {
 		private static final String TAG = "ENCODER";
 
-		private File fileOut;
 		private FileOutputStream fos;
 		
-		public Encoder (File fileOut) throws IOException
+		public Encoder (File fileOut, int baseFramesPerSecond, boolean withEmbeddedAudio) throws IOException
 		{
-			this.fileOut = fileOut;
-
 			fos = new info.guardianproject.iocipher.FileOutputStream(fileOut);
 			SeekableByteChannel sbc = new IOCipherFileChannelWrapper(fos.getChannel());
 
-			org.jcodec.common.AudioFormat af = null;//new org.jcodec.common.AudioFormat(org.jcodec.common.AudioFormat.MONO_S16_LE(mAudioSampleRate));
+			org.jcodec.common.AudioFormat af = null;
 			
-			muxer = new ImageToMJPEGMOVMuxer(sbc,af);
+			if (withEmbeddedAudio)
+				af = new org.jcodec.common.AudioFormat(org.jcodec.common.AudioFormat.MONO_S16_LE(MediaConstants.sAudioSampleRate));
 			
+			muxer = new ImageToMJPEGMOVMuxer(sbc,af,baseFramesPerSecond);			
 		}
 		
 		public void run ()
@@ -292,21 +468,30 @@ public class VideoCameraActivity extends CameraBaseActivity {
 				{
 					if (mFrameQ.peek() != null)
 					{
-						byte[] data = mFrameQ.pop();		
+						VideoFrame vf = mFrameQ.pop();
 						
-						muxer.addFrame(mLastWidth, mLastHeight, ByteBuffer.wrap(data),mFPS);						
+						muxer.addFrame(mLastWidth, mLastHeight, ByteBuffer.wrap(vf.image),vf.fps,vf.duration);	
+						
 					}
 
 				}
+				
+				//now write audio
+				
+            	FileInputStream fis = new FileInputStream(fileAudio);
+            	byte[] audioBuffer = new byte[1024*64];
+            	int bytesRead = -1;
+            	
+            	while ((bytesRead = fis.read(audioBuffer))!=-1)
+            	{
+            		muxer.addAudio(ByteBuffer.wrap(audioBuffer, 0, bytesRead));
+            	}
 
 				muxer.finish();
 				
+				fis.close();
 				fos.close();
 				
-				setResult(Activity.RESULT_OK, new Intent().putExtra(MediaStore.EXTRA_OUTPUT, fileOut.getAbsolutePath()));
-				
-				if (isRequest)
-					finish();
 				
 			} catch (Exception e) {
 				Log.e(TAG, "IO", e);
@@ -344,6 +529,7 @@ public class VideoCameraActivity extends CameraBaseActivity {
 				
 				if (aac != null)
 					aac.stopRecording();
+				
 			}
 		}
 		
@@ -404,7 +590,7 @@ public class VideoCameraActivity extends CameraBaseActivity {
 						e.printStackTrace();
 					}
 				 }
-				 else
+				 else if (audioRecord.getRecordingState() == AudioRecord.STATE_INITIALIZED)
 				 {
 				   audioRecord.startRecording();
 				   
@@ -415,7 +601,6 @@ public class VideoCameraActivity extends CameraBaseActivity {
 		                try {
 		                	outputStreamAudio.write(audioData,0,audioDataBytes);
 		                	
-		                //	muxer.addAudio(ByteBuffer.wrap(audioData));
 		                } catch (IOException e) {
 		                    e.printStackTrace();
 		                }
@@ -423,6 +608,8 @@ public class VideoCameraActivity extends CameraBaseActivity {
 				   }
 				   
 				   audioRecord.stop();
+                   audioRecord.release();
+
 				   try {
 					   outputStreamAudio.flush();
 					outputStreamAudio.close();
@@ -430,7 +617,9 @@ public class VideoCameraActivity extends CameraBaseActivity {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
-				 }
+				 } else {
+                     Log.d(TAG, "Failed to initialize AudioRecorder. Likely a device specific bug");
+                 }
 				 
 				 
 			 }
@@ -439,6 +628,15 @@ public class VideoCameraActivity extends CameraBaseActivity {
 		 thread.start();
 
 	 }
+	 
+	  @Override
+	   public void onConfigurationChanged(Configuration newConfig) {
+		  
+		  	mIsRecording = false;
+		  	
+	        super.onConfigurationChanged(newConfig);
+
+	   }
 	 
 	 
 	

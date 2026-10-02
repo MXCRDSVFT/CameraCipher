@@ -1,26 +1,54 @@
+/**
+ * 
+ * This file contains code from the IOCipher Camera Library "CipherCam".
+ *
+ * For more information about IOCipher, see https://guardianproject.info/code/iocipher
+ * and this sample library: https://github.com/n8fr8/IOCipherCameraExample
+ *
+ * IOCipher Camera Sample is distributed under this license (aka the 3-clause BSD license)
+ *
+ * @author n8fr8
+ * 
+ */
+
 package info.guardianproject.iocipher.camera;
 
 import java.io.IOException;
 import java.util.List;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.pm.PackageManager;
+import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.ImageFormat;
+import android.graphics.Picture;
+import android.graphics.Rect;
 import android.hardware.Camera;
 import android.hardware.Camera.CameraInfo;
+import android.hardware.Camera.Parameters;
 import android.hardware.Camera.PictureCallback;
 import android.hardware.Camera.PreviewCallback;
 import android.hardware.Camera.Size;
+import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.View.OnTouchListener;
 import android.widget.Button;
+import android.widget.ImageView;
 import android.widget.TextView;
 
-public abstract class CameraBaseActivity extends Activity implements OnClickListener, SurfaceHolder.Callback, PictureCallback, PreviewCallback {
+import com.larvalabs.svgandroid.SVG;
+import com.larvalabs.svgandroid.SVGParser;
+
+public abstract class CameraBaseActivity extends Activity implements OnClickListener, OnTouchListener, SurfaceHolder.Callback, PictureCallback, PreviewCallback {
 	
 	Button button;
 	TextView progress;
@@ -33,18 +61,24 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 	Camera camera;
 	CameraInfo cameraInfo;
 	
+	View overlayView;
+	
 	protected boolean mPreviewing;
 
-	private final static String LOG = "Camera";
+	private final static String LOG = "CipherCam";
 
 	protected int mRotation = 0;
 
+	private int mPreviewWidth = -1;
+	private int mPreviewHeight = -1;
+	
+	boolean mIsVideo = false;
+	
 	@SuppressWarnings("deprecation")
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
 
-		// This example uses decor view, but you can use any visible view.
 		View decorView = getWindow().getDecorView();
 		int uiOptions = View.SYSTEM_UI_FLAG_LOW_PROFILE;
 		decorView.setSystemUiVisibility(uiOptions);
@@ -56,7 +90,7 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 		button = (Button) findViewById(R.id.surface_grabber_button);
 		button.setOnClickListener(this);
 		
-		buttonSelfie = (Button)findViewById(R.id.tbSelfie);
+		buttonSelfie = (Button)findViewById(R.id.selfie_button);
 		buttonSelfie.setOnClickListener(new OnClickListener()
 		{
 
@@ -69,19 +103,49 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 		});
 		
 		progress = (TextView) findViewById(R.id.surface_grabber_progress);
-		
 		view = (SurfaceView) findViewById(R.id.surface_grabber_holder);
+		overlayView = findViewById(R.id.overlay_view);
+	        
+		  
 		holder = view.getHolder();
 		holder.addCallback(this);
 		holder.setType(SurfaceHolder.SURFACE_TYPE_PUSH_BUFFERS);
 		
 		view.setOnClickListener(this);
 				
+		view.setOnTouchListener(this);
+		
 	}
+	
+	/*
+	private void setOverlayImage (String path)
+    {
+        try 
+        {
+        	
+        	Bitmap bitmap = Bitmap.createBitmap(overlayView.getWidth(),overlayView.getHeight(), Bitmap.Config.ARGB_8888);
+            Canvas canvas = new Canvas(bitmap);
+            
+            SVG svg = SVGParser.getSVGFromAsset(getAssets(), path);
 
+            Rect rBounds = new Rect(0,0,overlayView.getWidth(),overlayView.getHeight());
+            Picture p = svg.getPicture();                       
+            canvas.drawPicture(p, rBounds);            
+            
+            overlayView.setImageBitmap( bitmap);
+        }
+        catch(IOException ex) 
+        {
+        	Log.e("BaseCamera","error rendering overlay",ex);
+            return;
+        }
+        
+    }*/
+    
+	
 	protected int getLayout()
 	{
-		return R.layout.camera;
+		return R.layout.base_camera;
 	}
 	
 
@@ -132,6 +196,7 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 		return (facing == CameraInfo.CAMERA_FACING_BACK) ? CameraInfo.CAMERA_FACING_FRONT : CameraInfo.CAMERA_FACING_BACK;
 	}
 	
+	@SuppressLint("NewApi")
 	private boolean tryCreateCamera(int facing)
 	{
 	     Camera.CameraInfo info = new Camera.CameraInfo();
@@ -148,25 +213,46 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 				 
 				 mRotation = setCameraDisplayOrientation(this,nCam,camera);
 				 
-				 
 				 List<Camera.Size> supportedPreviewSizes =  camera.getParameters().getSupportedPreviewSizes();
 				 List<Camera.Size> supportedPictureSize = camera.getParameters().getSupportedPictureSizes();
 				 
-				 int previewQuality = 4;
+				 int previewQuality = 5;
 				 
-				 params.setPreviewSize(supportedPreviewSizes.get(previewQuality).width, supportedPreviewSizes.get(previewQuality).height);
+				 if (mPreviewWidth == -1)
+					 mPreviewWidth = supportedPreviewSizes.get(previewQuality).width;
+				 
+				 if (mPreviewHeight == -1)
+					 mPreviewHeight = supportedPreviewSizes.get(previewQuality).height;
+				 
+				 params.setPreviewSize(mPreviewWidth, mPreviewHeight);
+				 
 				 params.setPictureSize(supportedPictureSize.get(1).width, supportedPictureSize.get(1).height);
-				 
-				 int previewWidth = supportedPreviewSizes.get(previewQuality).width;
-				 int previewHeight = supportedPreviewSizes.get(previewQuality).height;
 				 
 				 if (this.getCameraDirection() == CameraInfo.CAMERA_FACING_BACK)
 				 {
-					 params.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
 					 
+					 if (mIsVideo && params.getSupportedFocusModes().contains(
+							    Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO)) {
+							  params.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_VIDEO);
+							}
+					 else if (params.getSupportedFocusModes().contains(
+							    Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE)) {
+							  params.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
+							}
+					 else if  (params.getSupportedFocusModes().contains(
+							    Camera.Parameters.FOCUS_MODE_AUTO)) {
+							  params.setFocusMode(Camera.Parameters.FOCUS_MODE_AUTO);
+							}
+					
 					 if (mRotation > 0)
 						 params.setRotation(mRotation);
 
+					 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH_MR1) {
+						 if (params.isVideoStabilizationSupported())
+							 params.setVideoStabilization(true);
+						 
+					 }
+					 
 				 }
 				 else
 				 {
@@ -174,7 +260,7 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 						 params.setRotation(360-mRotation);
 				 }
 									
-					camera.setParameters(params);
+				 camera.setParameters(params);
 				
 					/*
 	                for (int i = 0; i < BUFFER_COUNT; i++) {
@@ -197,7 +283,8 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 							// TODO Auto-generated catch block
 							e.printStackTrace();
 						}
-					
+					//start video
+			        
 		    	 return true;
 		     }
 	     }
@@ -216,12 +303,14 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 	{
 		try
 	    {    
-	        // release the camera immediately on pause event   
-			camera.stopPreview(); 
-			camera.setPreviewCallback(null);
-			camera.release();
-			camera = null;
-
+			if (camera != null)
+			{
+		        // release the camera immediately on pause event   
+				camera.stopPreview(); 
+				camera.setPreviewCallback(null);
+				camera.release();
+				camera = null;
+			}
 	    }
 	    catch(Exception e)
 	    {
@@ -232,8 +321,12 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 
 	@Override
 	public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-		camera.startPreview();
-		mPreviewing = true;
+		
+		if (camera != null)
+		{
+			camera.startPreview();
+			mPreviewing = true;
+		}
 	}
 
 	protected Size choosePictureSize(List<Size> localSizes)
@@ -258,7 +351,9 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 		try {
 			
 			this.holder = holder;
-			camera.setPreviewDisplay(holder);
+			
+			if (camera != null)
+				camera.setPreviewDisplay(holder);
 			
 		} catch(IOException e) {
 			Log.e(LOG, e.toString());
@@ -275,6 +370,15 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 			camera.takePicture(null, null, this);
 		}
 	}
+	
+
+	@Override
+	public boolean onTouch(View v, MotionEvent event) {
+		
+		return false;
+	}
+
+	
 
 	private void toggleCamera ()
 	{
@@ -332,4 +436,15 @@ public abstract class CameraBaseActivity extends Activity implements OnClickList
 	     
 	     return result;
 	 }
+	
+
+	   @Override
+	   public void onConfigurationChanged(Configuration newConfig) {
+	           super.onConfigurationChanged(newConfig);
+
+	           releaseCamera ();
+	           initCamera();
+	   }
+	
+	
 }
