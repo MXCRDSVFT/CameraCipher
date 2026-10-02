@@ -1,7 +1,17 @@
+/**
+ * 
+ * This file contains code from the IOCipher Camera Library "CipherCam".
+ *
+ * For more information about IOCipher, see https://guardianproject.info/code/iocipher
+ * and this sample library: https://github.com/n8fr8/IOCipherCameraExample
+ *
+ * IOCipher Camera Sample is distributed under this license (aka the 3-clause BSD license)
+ *
+ * @author n8fr8
+ * 
+ */
 package info.guardianproject.iocipher.camera.viewer;
 
-
-import java.io.IOException;
 
 import android.content.Context;
 import android.graphics.Bitmap;
@@ -41,15 +51,22 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
     private int dispWidth;
     private int dispHeight;
     private int displayMode;
+    private Context context;
+    private SurfaceHolder holder;
+    private int frameDelay = 0;
 
-    public class MjpegViewThread extends Thread {
+    private int lastW = -1, lastH = -1;
+    
+	public class MjpegViewThread extends Thread {
+		
         private SurfaceHolder mSurfaceHolder;
         private int frameCounter = 0;
         private long start;
         private Bitmap ovl;
-
+        
         public MjpegViewThread(SurfaceHolder surfaceHolder, Context context) {
             mSurfaceHolder = surfaceHolder;
+            
         }
 
         private Rect destRect(int bmw, int bmh) {
@@ -108,11 +125,15 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
             Rect destRect;
             Canvas c = null;
             Paint p = new Paint();
-            String fps;
+
             while (mRun) {
                 if(surfaceDone) {
                     try {
                         c = mSurfaceHolder.lockCanvas();
+                        
+                        if (c == null)
+                        	break;
+                        
                         synchronized (mSurfaceHolder) {
                             try {
                                 bm = mIn.readMjpegFrame();
@@ -135,16 +156,15 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
                                     }
                                     p.setXfermode(null);
                                     frameCounter++;
-                                    if((System.currentTimeMillis() - start) >= 1000) {
-                                        fps = String.valueOf(frameCounter)+" fps";
-                                        frameCounter = 0; 
-                                        start = System.currentTimeMillis();
-                                        ovl = makeFpsOverlay(overlayPaint, fps);
-                                    }
+                                    
                                 }
+                                
+                                if (frameDelay > 0)
+                                	Thread.sleep(frameDelay);
+                                
+                                
                             } catch (Exception e) {
-                                e.getStackTrace();
-                                Log.d(TAG, "catch IOException hit in run", e);
+                                Log.e(TAG, "catch IOException hit in run", e);
                             }
                         }
                     } finally { 
@@ -158,9 +178,9 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
     }
 
     private void init(Context context) {
-        SurfaceHolder holder = getHolder();
+    	this.context = context;
+        holder = getHolder();
         holder.addCallback(this);
-        thread = new MjpegViewThread(holder, context);
         setFocusable(true);
         overlayPaint = new Paint();
         overlayPaint.setTextAlign(Paint.Align.LEFT);
@@ -176,11 +196,22 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
 
     public void startPlayback() { 
         if(mIn != null) {
-            mRun = true;
+            mRun = true;          
+            thread = new MjpegViewThread(holder, context);
+            if (lastW != -1)
+            {
+            	thread.setSurfaceSize(lastW, lastH);
+            }
+            
             thread.start();         
         }
     }
 
+    public boolean isPlaying ()
+    {
+    	return mRun;
+    }
+    
     public void stopPlayback() { 
         mRun = false;
         boolean retry = true;
@@ -200,7 +231,11 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
     }
 
     public void surfaceChanged(SurfaceHolder holder, int f, int w, int h) { 
-        thread.setSurfaceSize(w, h); 
+    	if (thread != null)
+    		thread.setSurfaceSize(w, h);
+    	
+    	lastW = w;
+    	lastH = h;
     }
 
     public void surfaceDestroyed(SurfaceHolder holder) { 
@@ -223,7 +258,6 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
 
     public void setSource(MjpegInputStream source) { 
         mIn = source;
-        startPlayback();
     }
 
     public void setOverlayPaint(Paint p) { 
@@ -245,4 +279,13 @@ public class MjpegView extends SurfaceView implements SurfaceHolder.Callback {
     public void setDisplayMode(int s) { 
         displayMode = s; 
     }
+
+    public int getFrameDelay() {
+		return frameDelay;
+	}
+
+	public void setFrameDelay(int frameDelay) {
+		this.frameDelay = frameDelay;
+	}
+
 }

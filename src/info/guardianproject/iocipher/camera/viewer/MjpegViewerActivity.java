@@ -1,3 +1,16 @@
+/**
+ * 
+ * This file contains code from the IOCipher Camera Library "CipherCam".
+ *
+ * For more information about IOCipher, see https://guardianproject.info/code/iocipher
+ * and this sample library: https://github.com/n8fr8/IOCipherCameraExample
+ *
+ * IOCipher Camera Sample is distributed under this license (aka the 3-clause BSD license)
+ *
+ * @author n8fr8
+ * 
+ */
+
 package info.guardianproject.iocipher.camera.viewer;
 
 
@@ -49,8 +62,9 @@ public class MjpegViewerActivity extends Activity {
         try {
 
 	        mv.setDisplayMode(MjpegView.SIZE_BEST_FIT);
-	     //   mv.showFps(true);
-
+	        //mv.showFps(false);
+	        mv.setFrameDelay(2); //we need to better sync each frame to the audio
+	        
 			File fileAudio = null;
 			
 			if (ioCipherAudioPath == null)
@@ -117,6 +131,7 @@ public class MjpegViewerActivity extends Activity {
 	        at = new AudioTrack(AudioManager.STREAM_MUSIC, MediaConstants.sAudioSampleRate,
 	        		MediaConstants.sChannelConfigOut, AudioFormat.ENCODING_PCM_16BIT,
 	            minBufferSize, AudioTrack.MODE_STREAM);
+	        
     	}
          
     }

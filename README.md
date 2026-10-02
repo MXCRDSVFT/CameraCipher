@@ -21,6 +21,12 @@ https://guardianproject.info/code/iocipher/
 We'd like to hear from you if you have included IOCipher in your app!
 support@guardianproject.info
 
+MjpegView code originally sourced from various samples and threads. More information at:
+https://github.com/elleryq/MjpegSample
+
+SVG-Android library available at:
+https://github.com/pents90/svg-android
+
 Some icons courtesy of: http://www.pelfusion.com/
 and http://www.iconarchive.com/show/flat-folder-icons-by-pelfusion/Empty-Folder-icon.html
 (free for non-commercial use)
